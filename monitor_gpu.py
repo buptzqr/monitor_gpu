@@ -1,6 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+from email import encoders
+from email.header import Header
+from email.mime.text import MIMEText
+from email.utils import parseaddr, formataddr
+from email.mime.multipart import MIMEMultipart 
+from email.mime.base import MIMEBase
+
 import os
 import numpy as np
 import pandas as pd
@@ -9,6 +16,8 @@ import subprocess
 import logging
 import socket
 import requests
+import datetime
+import smtplib
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -18,6 +27,10 @@ logging.basicConfig(
 hostname = socket.gethostname()
 
 DINGDING_ROBOT_WEBHOOK = ''
+
+def _format_addr(s):
+    name, addr = parseaddr(s)
+    return formataddr((Header(name, 'utf-8').encode(), addr))
 
 def send_msg(msg):
     """发送消息到钉钉"""
@@ -54,6 +67,9 @@ def monitor_nowtime(is_console):
     command2 = 'nvidia-smi --query-gpu=index,pci.bus_id,memory.total --format=csv,nounits'
     df2 = pd.read_csv(os.popen(command2))
     t1 = time.time()
+    # 获取GPU数量
+    gpu_num = df2.shape[0]
+    
     if is_console :
         logging.info('查询用时:%s' % (t1 - t0))
 
@@ -87,7 +103,7 @@ def monitor_nowtime(is_console):
             continue
         if is_console :
             logging.info('执行人为:%s' % process_user_name)
-        user_name = process_user_name[:6]  # ps aux 显示用户名不全。为统一只取前六位
+        user_name = process_user_name[:12]  # ps aux 显示用户名不全。为统一只取前六位
         gpu_index = df2.loc[df2[df2[' pci.bus_id'] == row[' gpu_bus_id']].index.tolist()[0], 'index']
         if is_console :
             logging.info('所用的GPU为:%s' % gpu_index)
@@ -122,7 +138,7 @@ def monitor_nowtime(is_console):
 
     return used_message_arr
 
-filename = "/home/bupt-sse1/monitor_gpu/log/gpu_usage.txt"
+filename = "./log/gpu_usage.txt"
 now_hour = -1;   #当前小时数
 now_minute = -1;  #当前分钟数
 count = 0;
@@ -158,7 +174,7 @@ while True :
             print("count:" + str(count))
             print("mess_dict" + str(mess_dict))
             for key,value in mess_dict.items() :
-                f.write(key+ ": 使用时间" + str(value[0]) + "mins  占用gpu百分比：" + str(value[1]/(count * 2)) + "%\n")
+                f.write(key+ ": 使用时间" + str(value[0]) + "mins  占用gpu百分比：" + str(value[1]/(count * gpu_num)) + "%\n")
             f.write("\n")
             f.close()
 
@@ -169,6 +185,43 @@ while True :
         mess_dict = {}
         count = 0
 
+    # 每周发送一次实验室GPU使用情况统计信息
+    if datetime.datetime.now().weekday() == 3:
+        from_addr = ''
+        password = ''
+        to_addr = ','.join(['xxxx@bupt.edu.cn','xxx@bupt.edu.cn'])
+        smtp_server = 'smtp.163.com'
+        # 邮件对象:
+        msg = MIMEMultipart()
+        host_name = os.popen("hostname").read().strip('\n')
+        msg['From'] = _format_addr(host_name + ' <%s>' % from_addr)
+        msg['To'] = to_addr
+        msg['Subject'] = Header('服务器显卡使用情况', 'utf-8').encode()
+
+        # 邮件正文是MIMEText:
+        msg.attach(MIMEText(host_name, 'plain', 'utf-8'))
+
+        # 添加附件就是加上一个MIMEBase，从本地读取文件:
+        with open('./log/gpu_usage.txt', 'rb') as f:
+            # 设置附件的MIME和文件名，这里是png类型:
+            mime = MIMEBase('text', 'plain', filename='gpu_usage.txt')
+            # 加上必要的头信息:
+            mime.add_header('Content-Disposition', 'attachment', filename='gpu_usage.txt')
+            mime.add_header('Content-ID', '<0>')
+            mime.add_header('X-Attachment-Id', '0')
+            # 把附件的内容读进来:
+            mime.set_payload(f.read())
+            # 用Base64编码:
+            encoders.encode_base64(mime)
+            # 添加到MIMEMultipart:
+            msg.attach(mime)
+            server = smtplib.SMTP(smtp_server, 25)
+            server.set_debuglevel(1)
+            server.login(from_addr, password)
+            server.sendmail(from_addr, msg['to'].split(','), msg.as_string())
+            server.quit()
+        os.system("rm ./log/gpu_usage.txt")
+            
 
     count += 1
     used_message_arr = monitor_nowtime(False)
