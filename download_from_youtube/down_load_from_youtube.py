@@ -1404,4 +1404,4 @@ video_Ids_unique=set(videoIds)
 for videoId in video_Ids_unique:
     download_link = "https://www.youtube.com/watch?v=" + videoId  # 构造下载地址
     os.chdir(r"D:\my_codes\data\golfdb")
-    os.system("youtube-dl " + download_link)  # 用youtube-dl下载视频
+    os.system("youtube-dl --id " + download_link)  # 用youtube-dl下载视频
